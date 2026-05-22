@@ -32,7 +32,17 @@ jobs:
         mkdir -p tools
         git clone --depth=1 https://github.com/ggerganov/llama.cpp tools/llama.cpp
         cd tools/llama.cpp
-        make -j$(nproc) LLAMA_STATIC=1 LLAMA_AVX2=1 LLAMA_NATIVE=0 BUILD_SHARED_LIBS=OFF
+        mkdir -p build && cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DGGML_NATIVE=OFF \
+          -DGGML_AVX2=ON \
+          -DLLAMA_BUILD_TESTS=OFF \
+          -DLLAMA_BUILD_EXAMPLES=OFF \
+          -DLLAMA_BUILD_SERVER=OFF \
+          -GNinja
+        ninja -j$(nproc) llama ggml
         echo "=== libs generadas ==="
         find . -name "*.a" | sort
 
@@ -50,7 +60,6 @@ jobs:
         cd /tmp/gnu-efi
         make ARCH=x86_64 -j$(nproc)
         sudo make ARCH=x86_64 PREFIX=/tmp/efi-install install
-        ls /tmp/efi-install/lib/
 
         cd $GITHUB_WORKSPACE/bootloader
 
@@ -86,7 +95,7 @@ jobs:
 
     - name: Build AION kernel
       run: |
-        LLAMA_LIB=$(find tools/llama.cpp -name "libllama.a" | head -1)
+        LLAMA_LIB=$(find tools/llama.cpp/build -name "libllama.a" | head -1)
         LLAMA_INC="tools/llama.cpp/include"
         LLAMA_GGML_INC="tools/llama.cpp/ggml/include"
         echo "LLAMA_LIB=$LLAMA_LIB"
