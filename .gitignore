@@ -1,0 +1,21 @@
+# Build outputs
+*.o
+*.so
+*.a
+*.bin
+*.EFI
+aion-os.iso
+
+# Model weights (too large for git — downloaded by CI)
+iso_root/AION/consciousness.bin
+tools/llama.cpp/
+
+# Temp
+*.tmp
+*.img
+__pycache__/
+
+# Editor
+.vscode/
+*.swp
+*~

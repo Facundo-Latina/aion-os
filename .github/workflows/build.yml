@@ -1,0 +1,173 @@
+name: AION-OS Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build AION-OS ISO
+    runs-on: ubuntu-22.04
+
+    steps:
+    # ── 1. Checkout ──────────────────────────────────────────────
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    # ── 2. Install build dependencies ────────────────────────────
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y \
+          build-essential \
+          nasm \
+          xorriso \
+          mtools \
+          dosfstools \
+          wget \
+          git \
+          cmake \
+          ninja-build \
+          python3 \
+          ovmf \
+          gnu-efi \
+          binutils-x86-64-linux-gnu
+
+    # ── 3. Install x86_64-elf cross-compiler ─────────────────────
+    - name: Install x86_64-elf-gcc toolchain
+      run: |
+        wget -q https://github.com/lordmilko/i686-elf-tools/releases/download/13.2.0/x86_64-elf-tools-linux.tar.gz \
+          -O /tmp/toolchain.tar.gz || \
+        # Fallback: build from source using system gcc with -target
+        echo "Using system gcc with elf target"
+        
+        # Install via apt if available
+        sudo apt-get install -y gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu || true
+        
+        # Create symlinks for expected compiler names
+        sudo ln -sf /usr/bin/x86_64-linux-gnu-gcc /usr/local/bin/x86_64-elf-gcc || true
+        sudo ln -sf /usr/bin/x86_64-linux-gnu-ld  /usr/local/bin/x86_64-elf-ld  || true
+        sudo ln -sf /usr/bin/x86_64-linux-gnu-objcopy /usr/local/bin/x86_64-elf-objcopy || true
+        x86_64-elf-gcc --version || x86_64-linux-gnu-gcc --version
+
+    # ── 4. Clone and build llama.cpp ─────────────────────────────
+    - name: Build llama.cpp (freestanding CPU backend)
+      run: |
+        mkdir -p tools
+        git clone --depth=1 https://github.com/ggerganov/llama.cpp tools/llama.cpp
+        cd tools/llama.cpp
+        mkdir build && cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DLLAMA_STATIC=ON \
+          -DLLAMA_NATIVE=OFF \
+          -DLLAMA_AVX2=ON \
+          -DLLAMA_BUILD_TESTS=OFF \
+          -DLLAMA_BUILD_EXAMPLES=OFF \
+          -GNinja
+        ninja -j$(nproc) llama
+        ls -la *.a || find . -name "*.a"
+
+    # ── 5. Download Qwen2.5:3b Q4_K_M model ──────────────────────
+    - name: Download Qwen2.5:3b Q4_K_M weights
+      run: |
+        mkdir -p iso_root/AION
+        # Download from HuggingFace
+        wget -q --show-progress \
+          "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf" \
+          -O iso_root/AION/consciousness.bin
+        ls -lh iso_root/AION/consciousness.bin
+
+    # ── 6. Build UEFI bootloader ──────────────────────────────────
+    - name: Build UEFI bootloader
+      run: |
+        cd bootloader
+
+        # Auto-detectar rutas reales de gnu-efi en este runner
+        EFI_INC=$(find /usr/include -name "efi.h" 2>/dev/null | head -1 | xargs dirname)
+        EFI_LIB=$(find /usr/lib -name "crt0-efi-x86_64.o" 2>/dev/null | head -1 | xargs dirname)
+        EFI_LDS=$(find /usr/lib -name "elf_x86_64_efi.lds" 2>/dev/null | head -1)
+        echo "EFI_INC=$EFI_INC EFI_LIB=$EFI_LIB EFI_LDS=$EFI_LDS"
+
+        x86_64-linux-gnu-gcc \
+          -Wall -Wno-implicit-function-declaration \
+          -ffreestanding -fno-stack-protector -fno-stack-check \
+          -fshort-wchar -mno-red-zone \
+          -I${EFI_INC} -I${EFI_INC}/x86_64 -I${EFI_INC}/protocol \
+          -DGNU_EFI_USE_MS_ABI \
+          -c bootloader.c -o bootloader.o
+
+        x86_64-linux-gnu-gcc \
+          -nostdlib -znocombreloc \
+          -T ${EFI_LDS} \
+          -shared -Bsymbolic \
+          ${EFI_LIB}/crt0-efi-x86_64.o \
+          bootloader.o \
+          -o bootloader.so \
+          -lefi -lgnuefi \
+          -L${EFI_LIB}
+
+        objcopy \
+          -j .text -j .sdata -j .data -j .rodata \
+          -j .dynamic -j .dynsym -j .rel -j .rela \
+          -j .rel.* -j .rela.* -j .reloc \
+          --strip-debug \
+          --target=efi-app-x86_64 \
+          bootloader.so BOOTX64.EFI
+
+        ls -lh BOOTX64.EFI
+
+    # ── 7. Build kernel ───────────────────────────────────────────
+    - name: Build AION kernel
+      run: |
+        cd kernel
+        
+        # Set compiler (use cross-compiler or linux-gnu with freestanding)
+        export CC="x86_64-linux-gnu-gcc"
+        export AS="nasm"
+        export LD="x86_64-linux-gnu-ld"
+        
+        # Build
+        make -j$(nproc) \
+          CC="${CC}" AS="${AS}" LD="${LD}" \
+          LLAMA_LIB=../tools/llama.cpp/build/libllama.a
+        
+        ls -lh kernel.bin
+
+    # ── 8. Assemble ISO image ─────────────────────────────────────
+    - name: Assemble bootable ISO
+      run: |
+        python3 tools/build/make_iso.py
+        ls -lh aion-os.iso
+
+    # ── 9. Verify ISO ─────────────────────────────────────────────
+    - name: Verify ISO structure
+      run: |
+        # Check EFI partition presence
+        file aion-os.iso
+        # List ISO contents
+        xorriso -indev aion-os.iso -find / -type f 2>/dev/null | head -30
+
+    # ── 10. Upload artifact ───────────────────────────────────────
+    - name: Upload AION-OS ISO
+      uses: actions/upload-artifact@v4
+      with:
+        name: aion-os-iso
+        path: aion-os.iso
+        retention-days: 30
+        compression-level: 0   # ISO is already compressed
+
+    # ── 11. Upload build info ─────────────────────────────────────
+    - name: Upload build info
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-info
+        path: |
+          kernel/kernel.bin
+          bootloader/BOOTX64.EFI
+        retention-days: 7
