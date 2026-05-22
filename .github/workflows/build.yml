@@ -86,23 +86,40 @@ jobs:
     # ── 6. Build UEFI bootloader ──────────────────────────────────
     - name: Build UEFI bootloader
       run: |
-        sudo apt-get install -y mingw-w64
+        # Compilar gnu-efi desde source para evitar problemas de relocacion
+        git clone --depth=1 https://github.com/rhboot/gnu-efi /tmp/gnu-efi
+        cd /tmp/gnu-efi
+        make ARCH=x86_64 -j$(nproc)
+        make ARCH=x86_64 PREFIX=/tmp/gnu-efi-install install
 
-        EFI_INC=$(find /usr/include -name "efi.h" 2>/dev/null | head -1 | xargs dirname)
-        echo "EFI_INC=$EFI_INC"
+        cd $GITHUB_WORKSPACE/bootloader
 
-        cd bootloader
-        x86_64-w64-mingw32-gcc \
+        EFI_INC=/tmp/gnu-efi-install/include/efi
+        EFI_LIB=/tmp/gnu-efi-install/lib
+
+        gcc \
           -Wall -Wno-implicit-function-declaration \
-          -ffreestanding -fno-stack-protector \
-          -fshort-wchar -mno-red-zone \
+          -ffreestanding -fno-stack-protector -fno-stack-check \
+          -fshort-wchar -mno-red-zone -fPIC \
           -I${EFI_INC} -I${EFI_INC}/x86_64 -I${EFI_INC}/protocol \
           -DGNU_EFI_USE_MS_ABI \
-          -nostdlib \
-          -Wl,--subsystem,10 \
-          -Wl,--entry,efi_main \
-          bootloader.c \
-          -o BOOTX64.EFI
+          -c bootloader.c -o bootloader.o
+
+        ld \
+          -nostdlib -znocombreloc \
+          -T ${EFI_LIB}/elf_x86_64_efi.lds \
+          -shared -Bsymbolic \
+          ${EFI_LIB}/crt0-efi-x86_64.o \
+          bootloader.o \
+          -o bootloader.so \
+          -L${EFI_LIB} -lefi -lgnuefi
+
+        objcopy \
+          -j .text -j .sdata -j .data -j .rodata \
+          -j .dynamic -j .dynsym -j .rel -j .rela \
+          -j .rel.* -j .rela.* -j .reloc \
+          --strip-debug --target=efi-app-x86_64 \
+          bootloader.so BOOTX64.EFI
 
         ls -lh BOOTX64.EFI
 
