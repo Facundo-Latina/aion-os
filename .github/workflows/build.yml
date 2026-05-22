@@ -35,6 +35,7 @@ jobs:
         mkdir -p build && cd build
         cmake .. \
           -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DGGML_STATIC=ON \
           -DGGML_NATIVE=OFF \
           -DGGML_AVX2=ON \
