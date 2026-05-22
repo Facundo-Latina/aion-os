@@ -27,16 +27,12 @@ jobs:
           gnu-efi mingw-w64 \
           gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu
 
-- name: Build llama.cpp
+    - name: Build llama.cpp
       run: |
         mkdir -p tools
         git clone --depth=1 https://github.com/ggerganov/llama.cpp tools/llama.cpp
         cd tools/llama.cpp
-        make -j$(nproc) \
-          LLAMA_STATIC=1 \
-          LLAMA_AVX2=1 \
-          LLAMA_NATIVE=0 \
-          BUILD_SHARED_LIBS=OFF
+        make -j$(nproc) LLAMA_STATIC=1 LLAMA_AVX2=1 LLAMA_NATIVE=0 BUILD_SHARED_LIBS=OFF
         echo "=== libs generadas ==="
         find . -name "*.a" | sort
 
@@ -90,7 +86,7 @@ jobs:
 
     - name: Build AION kernel
       run: |
-        LLAMA_LIB=$(find tools/llama.cpp/build -name "libllama.a" | head -1)
+        LLAMA_LIB=$(find tools/llama.cpp -name "libllama.a" | head -1)
         LLAMA_INC="tools/llama.cpp/include"
         LLAMA_GGML_INC="tools/llama.cpp/ggml/include"
         echo "LLAMA_LIB=$LLAMA_LIB"
