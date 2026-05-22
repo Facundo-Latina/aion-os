@@ -86,39 +86,23 @@ jobs:
     # ── 6. Build UEFI bootloader ──────────────────────────────────
     - name: Build UEFI bootloader
       run: |
-        cd bootloader
+        sudo apt-get install -y mingw-w64
 
-        # Auto-detectar rutas reales de gnu-efi en este runner
         EFI_INC=$(find /usr/include -name "efi.h" 2>/dev/null | head -1 | xargs dirname)
-        EFI_LIB=$(find /usr/lib -name "crt0-efi-x86_64.o" 2>/dev/null | head -1 | xargs dirname)
-        EFI_LDS=$(find /usr/lib -name "elf_x86_64_efi.lds" 2>/dev/null | head -1)
-        echo "EFI_INC=$EFI_INC EFI_LIB=$EFI_LIB EFI_LDS=$EFI_LDS"
+        echo "EFI_INC=$EFI_INC"
 
-        x86_64-linux-gnu-gcc \
+        cd bootloader
+        x86_64-w64-mingw32-gcc \
           -Wall -Wno-implicit-function-declaration \
-          -ffreestanding -fno-stack-protector -fno-stack-check \
+          -ffreestanding -fno-stack-protector \
           -fshort-wchar -mno-red-zone \
           -I${EFI_INC} -I${EFI_INC}/x86_64 -I${EFI_INC}/protocol \
           -DGNU_EFI_USE_MS_ABI \
-          -c bootloader.c -o bootloader.o
-
-        x86_64-linux-gnu-gcc \
-          -nostdlib -znocombreloc \
-          -T ${EFI_LDS} \
-          -shared -Bsymbolic \
-          ${EFI_LIB}/crt0-efi-x86_64.o \
-          bootloader.o \
-          -o bootloader.so \
-          -lefi -lgnuefi \
-          -L${EFI_LIB}
-
-        objcopy \
-          -j .text -j .sdata -j .data -j .rodata \
-          -j .dynamic -j .dynsym -j .rel -j .rela \
-          -j .rel.* -j .rela.* -j .reloc \
-          --strip-debug \
-          --target=efi-app-x86_64 \
-          bootloader.so BOOTX64.EFI
+          -nostdlib \
+          -Wl,--subsystem,10 \
+          -Wl,--entry,efi_main \
+          bootloader.c \
+          -o BOOTX64.EFI
 
         ls -lh BOOTX64.EFI
 
